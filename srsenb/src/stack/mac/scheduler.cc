@@ -141,7 +141,13 @@ sched::~sched() {}
 
 void sched::init(rrc_interface_mac* rrc_)
 {
+  init(rrc_, 0);
+}
+
+void sched::init(rrc_interface_mac* rrc_, agent_interface_mac* agent_)
+{
   rrc = rrc_;
+  agent = agent_;
 
   // Initialize first carrier scheduler
   carrier_schedulers.emplace_back(new carrier_sched{rrc, &ue_db, 0});
@@ -391,6 +397,9 @@ int sched::dl_sched(uint32_t tti_tx_dl, uint32_t cc_idx, sched_interface::dl_sch
 
     // copy result
     sched_result = tti_sched.dl_sched_result;
+
+    // Update agent
+    agent->update_dl_mac_prb_utilization_report(&sched_result);
   }
 
   return 0;
@@ -412,6 +421,9 @@ int sched::ul_sched(uint32_t tti, uint32_t cc_idx, srsenb::sched_interface::ul_s
 
     // copy result
     sched_result = tti_sched.ul_sched_result;
+
+    // Update agent
+    agent->update_ul_mac_prb_utilization_report(&sched_result);
   }
 
   return SRSLTE_SUCCESS;

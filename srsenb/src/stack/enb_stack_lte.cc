@@ -55,9 +55,10 @@ std::string enb_stack_lte::get_type()
   return "lte";
 }
 
-int enb_stack_lte::init(const stack_args_t& args_, const rrc_cfg_t& rrc_cfg_, phy_interface_stack_lte* phy_)
+int enb_stack_lte::init(const stack_args_t& args_, Empower::Agent::agent *agent_, const rrc_cfg_t& rrc_cfg_, phy_interface_stack_lte* phy_)
 {
   phy = phy_;
+  agent = agent_;
   if (init(args_, rrc_cfg_)) {
     return SRSLTE_ERROR;
   }
@@ -104,10 +105,10 @@ int enb_stack_lte::init(const stack_args_t& args_, const rrc_cfg_t& rrc_cfg_)
   rx_sockets.reset(new srslte::rx_multisocket_handler("ENBSOCKETS", stack_log));
 
   // Init all layers
-  mac.init(args.mac, rrc_cfg.cell_list, phy, &rlc, &rrc, this, mac_log);
+  mac.init(args.mac, rrc_cfg.cell_list, phy, &rlc, &rrc, this, agent, mac_log);
   rlc.init(&pdcp, &rrc, &mac, &timers, rlc_log);
   pdcp.init(&rlc, &rrc, &gtpu);
-  rrc.init(rrc_cfg, phy, &mac, &rlc, &pdcp, &s1ap, &gtpu, &timers);
+  rrc.init(rrc_cfg, phy, &mac, &rlc, &pdcp, &s1ap, agent, &gtpu, &timers);
   if (s1ap.init(args.s1ap, &rrc, &timers, this) != SRSLTE_SUCCESS) {
     stack_log->error("Couldn't initialize S1AP\n");
     return SRSLTE_ERROR;
@@ -217,6 +218,16 @@ void enb_stack_lte::handle_mme_rx_packet(srslte::unique_byte_buffer_t pdu,
   };
   // Defer the handling of MME packet to main stack thread
   pending_tasks.push(mme_queue_id, std::bind(task_handler, std::move(pdu)));
+}
+
+void enb_stack_lte::rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq)
+{
+  rrc.rrc_meas_config_add(rnti, id, pci, carrier_freq);
+}
+
+void enb_stack_lte::rrc_meas_config_rem(uint16_t rnti, uint8_t id)
+{
+  rrc.rrc_meas_config_rem(rnti, id);
 }
 
 void enb_stack_lte::add_mme_socket(int fd)

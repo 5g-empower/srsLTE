@@ -123,7 +123,7 @@ void parse_args(all_args_t* args, int argc, char* argv[])
     ("pcap.filename",  bpo::value<string>(&args->stack.mac_pcap.filename)->default_value("enb_mac.pcap"), "MAC layer capture filename")
     ("pcap.s1ap_enable",   bpo::value<bool>(&args->stack.s1ap_pcap.enable)->default_value(false),         "Enable S1AP packet captures for wireshark")
     ("pcap.s1ap_filename", bpo::value<string>(&args->stack.s1ap_pcap.filename)->default_value("enb_s1ap.pcap"), "S1AP layer capture filename")
-   
+
     /* MCS section */
     ("scheduler.pdsch_mcs", bpo::value<int>(&args->stack.mac.sched.pdsch_mcs)->default_value(-1), "Optional fixed PDSCH MCS (ignores reported CQIs if specified)")
     ("scheduler.pdsch_max_mcs", bpo::value<int>(&args->stack.mac.sched.pdsch_max_mcs)->default_value(-1), "Optional PDSCH MCS limit")
@@ -193,6 +193,11 @@ void parse_args(all_args_t* args, int argc, char* argv[])
     ("embms.enable", bpo::value<bool>(&args->stack.embms.enable)->default_value(false), "Enables MBMS in the eNB")
     ("embms.m1u_multiaddr", bpo::value<string>(&args->stack.embms.m1u_multiaddr)->default_value("239.255.0.1"), "M1-U Multicast address the eNB joins.")
     ("embms.m1u_if_addr", bpo::value<string>(&args->stack.embms.m1u_if_addr)->default_value("127.0.1.201"), "IP address of the interface the eNB will listen for M1-U traffic.")
+
+    // EmPOWER Agent section
+    ("agent.address", bpo::value<string>(&args->agent.address)->default_value("127.0.0.1"), "IP address of the EmPOWER controller.")
+    ("agent.port", bpo::value<uint16_t>(&args->agent.port)->default_value(5533), "TCP port of the EmPOWER controller.")
+    ("agent.delay", bpo::value<uint32_t>(&args->agent.delay)->default_value(2000), "Default delay ")
     ;
 
   // Positional options - config file location

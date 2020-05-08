@@ -22,6 +22,7 @@
 #include "srsenb/hdr/stack/rrc/rrc.h"
 #include "srsenb/hdr/stack/rrc/rrc_mobility.h"
 #include "srslte/asn1/asn1_utils.h"
+#include "srslte/asn1/liblte_mme.h"
 #include "srslte/asn1/rrc_asn1_utils.h"
 #include "srslte/common/bcd_helpers.h"
 #include "srslte/common/int_helpers.h"
@@ -52,11 +53,25 @@ void rrc::init(const rrc_cfg_t&       cfg_,
                gtpu_interface_rrc*    gtpu_,
                srslte::timer_handler* timers_)
 {
+  init(cfg_, phy_, mac_, rlc_, pdcp_, s1ap_, 0, gtpu_, timers_);
+}
+
+void rrc::init(const rrc_cfg_t&       cfg_,
+               phy_interface_rrc_lte* phy_,
+               mac_interface_rrc*     mac_,
+               rlc_interface_rrc*     rlc_,
+               pdcp_interface_rrc*    pdcp_,
+               s1ap_interface_rrc*    s1ap_,
+               agent_interface_rrc*   agent_,
+               gtpu_interface_rrc*    gtpu_,
+               srslte::timer_handler* timers_)
+{
   phy    = phy_;
   mac    = mac_;
   rlc    = rlc_;
   pdcp   = pdcp_;
   gtpu   = gtpu_;
+  agent  = agent_;
   s1ap   = s1ap_;
   timers = timers_;
 
@@ -222,6 +237,29 @@ void rrc::upd_user(uint16_t new_rnti, uint16_t old_rnti)
       old_it->second->send_connection_release();
     }
   }
+}
+
+/*******************************************************************************
+  Stack interface
+*******************************************************************************/
+void rrc::rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq)
+{
+  auto it = users.find(rnti);
+  if (it == users.end()) {
+    rrc_log->error("Unable to find RNTI %u", rnti);
+    return;
+  }
+  it->second->send_connection_reconf_add_meas(id, pci, carrier_freq);
+}
+
+void rrc::rrc_meas_config_rem(uint16_t rnti, uint8_t id)
+{
+  auto it = users.find(rnti);
+  if (it == users.end()) {
+    rrc_log->error("Unable to find RNTI %u", rnti);
+    return;
+  }
+  it->second->send_connection_reconf_rem_meas(id);
 }
 
 /*******************************************************************************
@@ -730,6 +768,9 @@ void rrc::rem_user(uint16_t rnti)
     rlc->rem_user(rnti);
     pdcp->rem_user(rnti);
 
+    // Remove user from agent
+    agent->rem_user(rnti);
+
     users.erase(rnti);
     rrc_log->info("Removed user rnti=0x%x\n", rnti);
   } else {
@@ -1164,26 +1205,13 @@ void rrc::ue::parse_ul_dcch(uint32_t lcid, srslte::unique_byte_buffer_t pdu)
       handle_rrc_con_setup_complete(&ul_dcch_msg.msg.c1().rrc_conn_setup_complete(), std::move(pdu));
       break;
     case ul_dcch_msg_type_c::c1_c_::types::ul_info_transfer:
-      pdu->N_bytes = ul_dcch_msg.msg.c1()
-                         .ul_info_transfer()
-                         .crit_exts.c1()
-                         .ul_info_transfer_r8()
-                         .ded_info_type.ded_info_nas()
-                         .size();
-      memcpy(pdu->msg,
-             ul_dcch_msg.msg.c1()
-                 .ul_info_transfer()
-                 .crit_exts.c1()
-                 .ul_info_transfer_r8()
-                 .ded_info_type.ded_info_nas()
-                 .data(),
-             pdu->N_bytes);
-      parent->s1ap->write_pdu(rnti, std::move(pdu));
+      handle_ul_info_transfer(&ul_dcch_msg.msg.c1().ul_info_transfer(), std::move(pdu));
       break;
     case ul_dcch_msg_type_c::c1_c_::types::rrc_conn_recfg_complete:
       handle_rrc_reconf_complete(&ul_dcch_msg.msg.c1().rrc_conn_recfg_complete(), std::move(pdu));
       parent->rrc_log->console("User 0x%x connected\n", rnti);
       state = RRC_STATE_REGISTERED;
+      send_identity_request();
       set_activity_timeout(UE_INACTIVITY_TIMEOUT);
       break;
     case ul_dcch_msg_type_c::c1_c_::types::security_mode_complete:
@@ -1206,6 +1234,7 @@ void rrc::ue::parse_ul_dcch(uint32_t lcid, srslte::unique_byte_buffer_t pdu)
       break;
     case ul_dcch_msg_type_c::c1_c_::types::meas_report:
       if (mobility_handler != nullptr) {
+        parent->agent->handle_ue_meas_report(rnti, ul_dcch_msg.msg.c1().meas_report());
         mobility_handler->handle_ue_meas_report(ul_dcch_msg.msg.c1().meas_report());
       } else {
         parent->rrc_log->warning("Received MeasReport but no mobility configuration is available\n");
@@ -1276,6 +1305,95 @@ void rrc::ue::handle_rrc_con_setup_complete(rrc_conn_setup_complete_s* msg, srsl
     parent->s1ap->initial_ue(rnti, s1ap_cause, std::move(pdu));
   }
   state = RRC_STATE_WAIT_FOR_CON_RECONF_COMPLETE;
+}
+
+void rrc::ue::send_identity_request()
+{
+
+  dl_dcch_msg_s dl_dcch_msg;
+
+  dl_dcch_msg.msg.set_c1().set_dl_info_transfer();
+  dl_dcch_msg.msg.c1().dl_info_transfer().rrc_transaction_id = (uint8_t)((transaction_id++) % 4);
+  dl_dcch_msg.msg.c1().dl_info_transfer().crit_exts.set_c1().set_dl_info_transfer_r8();
+  dl_dcch_msg.msg.c1().dl_info_transfer().crit_exts.c1().dl_info_transfer_r8().ded_info_type.set_ded_info_nas();
+
+  LIBLTE_MME_ID_REQUEST_MSG_STRUCT id_req;
+  id_req.id_type = LIBLTE_MME_EPS_MOBILE_ID_TYPE_IMSI;
+
+  srslte::byte_buffer_pool* pool = srslte::byte_buffer_pool::get_instance();
+  srslte::byte_buffer_t* nas_buffer = pool->allocate();
+
+  LIBLTE_ERROR_ENUM err = liblte_mme_pack_identity_request_msg(&id_req, (LIBLTE_BYTE_MSG_STRUCT*) nas_buffer);
+
+  if (err != LIBLTE_SUCCESS) {
+    return;
+  }
+
+  dl_dcch_msg.msg.c1().dl_info_transfer().crit_exts.c1().dl_info_transfer_r8().ded_info_type.ded_info_nas().resize(nas_buffer->N_bytes);
+
+  memcpy(dl_dcch_msg.msg.c1().dl_info_transfer().crit_exts.c1().dl_info_transfer_r8().ded_info_type.ded_info_nas().data(), nas_buffer->msg, nas_buffer->N_bytes);
+
+  send_dl_dcch(&dl_dcch_msg);
+}
+
+void rrc::ue::handle_ul_info_transfer(asn1::rrc::ul_info_transfer_s* msg, srslte::unique_byte_buffer_t pdu)
+{
+
+  ul_info_transfer_r8_ies_s* msg_r8 = &msg->crit_exts.c1().ul_info_transfer_r8();
+
+  // Send message over S1AP
+  pdu->N_bytes = msg_r8->ded_info_type.ded_info_nas().size();
+  memcpy(pdu->msg, msg_r8->ded_info_type.ded_info_nas().data(), pdu->N_bytes);
+
+  parent->s1ap->write_pdu(rnti, std::move(pdu));
+
+  if (state != RRC_STATE_REGISTERED) {
+    return;
+  }
+
+  // Parse NAS message
+  srslte::byte_buffer_t* nas_msg = pool->allocate();
+  memcpy(nas_msg->msg, msg_r8->ded_info_type.ded_info_nas().data(), msg_r8->ded_info_type.ded_info_nas().size());
+  nas_msg->N_bytes = msg_r8->ded_info_type.ded_info_nas().size();
+
+  uint8_t pd, msg_type, sec_hdr_type;
+
+  // Parse the message security header
+
+  LIBLTE_ERROR_ENUM err;
+  LIBLTE_MME_ID_RESPONSE_MSG_STRUCT id_resp;
+
+  liblte_mme_parse_msg_sec_header((LIBLTE_BYTE_MSG_STRUCT*)nas_msg, &pd, &sec_hdr_type);
+
+  // Invalid Security Header Type simply return function
+  if (!(sec_hdr_type == LIBLTE_MME_SECURITY_HDR_TYPE_PLAIN_NAS ||
+        sec_hdr_type == LIBLTE_MME_SECURITY_HDR_TYPE_INTEGRITY ||
+        sec_hdr_type == LIBLTE_MME_SECURITY_HDR_TYPE_INTEGRITY_AND_CIPHERED)) {
+
+    return;
+  }
+
+  // Now parse message header and handle message
+  liblte_mme_parse_msg_header((LIBLTE_BYTE_MSG_STRUCT*)nas_msg, &pd, &msg_type);
+
+  // Not an identity response
+  if (msg_type != LIBLTE_MME_MSG_TYPE_IDENTITY_RESPONSE) {
+     return;
+  }
+
+  err = liblte_mme_unpack_identity_response_msg((LIBLTE_BYTE_MSG_STRUCT*)nas_msg, &id_resp);
+
+  if (err != LIBLTE_SUCCESS) {
+        return;
+  }
+
+  uint64_t imsi = 0;
+  for (int i = 0; i <= 14; i++) {
+    imsi += id_resp.mobile_id.imsi[i] * std::pow(10, 14 - i);
+  }
+
+  parent->agent->add_user(imsi, id_resp.mobile_id.tmsi, rnti);
+
 }
 
 void rrc::ue::handle_rrc_reconf_complete(rrc_conn_recfg_complete_s* msg, srslte::unique_byte_buffer_t pdu)
@@ -1800,6 +1918,88 @@ void rrc::ue::send_connection_reconf_upd(srslte::unique_byte_buffer_t pdu)
   send_dl_dcch(&dl_dcch_msg, std::move(pdu));
 
   state = RRC_STATE_WAIT_FOR_CON_RECONF_COMPLETE;
+}
+
+void rrc::ue::send_connection_reconf_rem_meas(uint8_t id) {
+}
+
+void rrc::ue::send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t carrier_freq) {
+
+  dl_dcch_msg_s dl_dcch_msg;
+
+  dl_dcch_msg.msg.set_c1().set_rrc_conn_recfg();
+  dl_dcch_msg.msg.c1().rrc_conn_recfg().rrc_transaction_id = (uint8_t)((transaction_id++) % 4);
+  dl_dcch_msg.msg.c1().rrc_conn_recfg().crit_exts.set_c1().set_rrc_conn_recfg_r8();
+
+  asn1::rrc::rrc_conn_recfg_r8_ies_s *rrc_conn_recfg_r8_ies = &dl_dcch_msg.msg.c1().rrc_conn_recfg().crit_exts.c1().rrc_conn_recfg_r8();
+
+  rrc_conn_recfg_r8_ies->meas_cfg_present = true;
+  asn1::rrc::meas_cfg_s *meas_cfg = &rrc_conn_recfg_r8_ies->meas_cfg;
+
+  meas_cfg->quant_cfg_present = true;
+  meas_cfg->meas_obj_to_add_mod_list_present = true;
+  meas_cfg->report_cfg_to_add_mod_list_present = true;
+  meas_cfg->meas_id_to_add_mod_list_present = true;
+
+  meas_cfg->quant_cfg.quant_cfg_eutra_present = true;
+  meas_cfg->quant_cfg.quant_cfg_eutra.filt_coef_rsrp_present = true;
+  meas_cfg->quant_cfg.quant_cfg_eutra.filt_coef_rsrp = asn1::rrc::filt_coef_e::fc4;
+  meas_cfg->quant_cfg.quant_cfg_eutra.filt_coef_rsrq_present = true;
+  meas_cfg->quant_cfg.quant_cfg_eutra.filt_coef_rsrq = asn1::rrc::filt_coef_e::fc4;
+
+  asn1::rrc::meas_obj_to_add_mod_list_l *lobj = &meas_cfg->meas_obj_to_add_mod_list;
+
+  asn1::rrc::meas_obj_to_add_mod_s meas_obj;
+
+  meas_obj.meas_obj_id = id;
+  meas_obj.meas_obj.set_meas_obj_eutra();
+  meas_obj.meas_obj.meas_obj_eutra().carrier_freq = carrier_freq;
+  meas_obj.meas_obj.meas_obj_eutra().allowed_meas_bw = asn1::rrc::allowed_meas_bw_opts::mbw50;
+  meas_obj.meas_obj.meas_obj_eutra().presence_ant_port1 = false;
+  meas_obj.meas_obj.meas_obj_eutra().neigh_cell_cfg.from_number(0);
+
+  asn1::rrc::cells_to_add_mod_list_l *lcells = &meas_obj.meas_obj.meas_obj_eutra().cells_to_add_mod_list;
+
+  asn1::rrc::cells_to_add_mod_s cell;
+  cell.cell_idx = 1;
+  cell.pci = 0;
+  cell.cell_individual_offset = asn1::rrc::q_offset_range_e::db24;
+
+  lcells->push_back(cell);
+
+  lobj->push_back(meas_obj);
+
+  asn1::rrc::report_cfg_to_add_mod_list_l *lreport = &meas_cfg->report_cfg_to_add_mod_list;
+
+  asn1::rrc::report_cfg_to_add_mod_s report_cfg;
+
+  report_cfg.report_cfg_id = id;
+  report_cfg.report_cfg.set_report_cfg_eutra();
+  report_cfg.report_cfg.report_cfg_eutra().trigger_type.set_periodical();
+  report_cfg.report_cfg.report_cfg_eutra().trigger_quant = asn1::rrc::report_cfg_eutra_s::trigger_quant_e_::rsrp;
+  report_cfg.report_cfg.report_cfg_eutra().trigger_type.periodical().purpose = asn1::rrc::report_cfg_eutra_s::trigger_type_c_::periodical_s_::purpose_e_::report_strongest_cells;
+  report_cfg.report_cfg.report_cfg_eutra().report_amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::infinity;
+  report_cfg.report_cfg.report_cfg_eutra().report_quant = asn1::rrc::report_cfg_eutra_s::report_quant_e_::both;
+  report_cfg.report_cfg.report_cfg_eutra().report_interv = asn1::rrc::report_interv_opts::ms480;
+  report_cfg.report_cfg.report_cfg_eutra().max_report_cells = 1;
+
+  lreport->push_back(report_cfg);
+
+  asn1::rrc::meas_id_to_add_mod_list_l *lid = &meas_cfg->meas_id_to_add_mod_list;
+
+  asn1::rrc::meas_id_to_add_mod_s meas_id;
+
+  meas_id.meas_id = id;
+  meas_id.meas_obj_id = id;
+  meas_id.report_cfg_id = id;
+
+  lid->push_back(meas_id);
+
+  printf("Sending add meas\n");
+
+  send_dl_dcch(&dl_dcch_msg);
+
+  printf("Sending done\n");
 }
 
 void rrc::ue::send_connection_reconf(srslte::unique_byte_buffer_t pdu)

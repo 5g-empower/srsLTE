@@ -79,6 +79,12 @@ int enb::init(const all_args_t& args_, srslte::logger* logger_)
     return SRSLTE_ERROR;
   }
 
+  std::unique_ptr<Empower::Agent::agent> lte_agent = std::unique_ptr<Empower::Agent::agent>(new Empower::Agent::agent(logger));
+  if (!lte_agent) {
+    log.console("Error creating LTE Agent instance.\n");
+    return SRSLTE_ERROR;
+  }
+
   // Init layers
   if (lte_radio->init(args.rf, lte_phy.get())) {
     log.console("Error initializing radio.\n");
@@ -90,14 +96,25 @@ int enb::init(const all_args_t& args_, srslte::logger* logger_)
     ret = SRSLTE_ERROR;
   }
 
-  if (lte_stack->init(args.stack, rrc_cfg, lte_phy.get())) {
+  if (lte_stack->init(args.stack, lte_agent.get(), rrc_cfg, lte_phy.get())) {
     log.console("Error initializing stack.\n");
     ret = SRSLTE_ERROR;
+  }
+
+  if (lte_agent->init(args, rrc_cfg, lte_stack.get())) {
+    log.console("Error initializing agent.\n");
+      return SRSLTE_ERROR;
   }
 
   stack = std::move(lte_stack);
   phy   = std::move(lte_phy);
   radio = std::move(lte_radio);
+  agent = std::move(lte_agent);
+
+  if (agent->start()) {
+    log.console("Error starting the agent.\n");
+    return SRSLTE_ERROR;
+  }
 
   log.console("\n==== eNodeB started ===\n");
   log.console("Type <t> to view trace\n");

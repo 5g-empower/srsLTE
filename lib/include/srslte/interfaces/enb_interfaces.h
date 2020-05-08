@@ -376,6 +376,14 @@ public:
   get_bearer_status(uint16_t rnti, uint32_t lcid, uint16_t* dlsn, uint16_t* dlhfn, uint16_t* ulsn, uint16_t* ulhfn) = 0;
 };
 
+// RRC interface for Stack
+class rrc_interface_stack
+{
+public:
+  virtual void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq) = 0;
+  virtual void rrc_meas_config_rem(uint16_t rnti, uint8_t id) = 0;
+};
+
 // PDCP interface for RLC
 class pdcp_interface_rlc
 {
@@ -406,6 +414,31 @@ public:
 
   ///< Provide packed SIB to MAC (buffer is managed by RRC)
   virtual uint8_t* read_pdu_bcch_dlsch(const uint8_t enb_cc_idx, const uint32_t sib_index) = 0;
+};
+
+// Agent interface for RRC
+class agent_interface_rrc
+{
+public:
+  virtual void add_user(uint64_t imsi, uint32_t tmsi, uint16_t rnti) = 0;
+  virtual void rem_user(uint16_t rnti) = 0;
+  virtual void handle_ue_meas_report(uint16_t rnti, const asn1::rrc::meas_report_s& msg) = 0;
+};
+
+// Agent interface for MAC
+class agent_interface_mac
+{
+public:
+  virtual void update_dl_mac_prb_utilization_report(srsenb::sched_interface::dl_sched_res_t * sched) = 0;
+  virtual void update_ul_mac_prb_utilization_report(srsenb::sched_interface::ul_sched_res_t * sched) = 0;
+};
+
+// Stack interface for Agent
+class stack_interface_agent
+{
+public:
+  virtual void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq) = 0;
+  virtual void rrc_meas_config_rem(uint16_t rnti, uint8_t id) = 0;
 };
 
 // RRC interface for PDCP

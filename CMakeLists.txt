@@ -79,6 +79,8 @@ option(ENABLE_HARDSIM  "Enable support for SIM cards"             ON)
 option(ENABLE_TTCN3    "Enable TTCN3 test binaries"               OFF)
 option(ENABLE_ZMQ_TEST "Enable ZMQ based E2E tests"               OFF)
 
+option(ENABLE_EMPOWERAGENTPROTO "Enable Empower Agent"            ON)
+
 option(BUILD_STATIC    "Attempt to statically link external deps" OFF)
 option(RPATH           "Enable RPATH"                             OFF)
 option(ENABLE_ASAN     "Enable gcc/clang address sanitizer"       OFF)
@@ -275,6 +277,15 @@ if (ENABLE_TTCN3)
   link_directories(${RAPIDJSON_LIBRARY_DIRS})
   message(STATUS "Building with TTCN3 binaries")
 endif (ENABLE_TTCN3)
+
+# EmpowerAgentProto
+set(EmpowerAgentProto_DIR /usr/local/lib)
+if (ENABLE_EMPOWERAGENTPROTO)
+  find_package(EmpowerAgentProto REQUIRED)
+  include_directories(${EMPOWERAGENTPROTO_INCLUDE_DIRS})
+  link_directories(${EMPOWERAGENTPROTO_LIBRARY_DIRS})
+  message(STATUS "Building with EmpowerAgentProto")
+endif (ENABLE_EMPOWERAGENTPROTO)
 
 ########################################################################
 # Install Dirs

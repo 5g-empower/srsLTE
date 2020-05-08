@@ -47,6 +47,7 @@ class enb_stack_lte final : public enb_stack_base,
                             public stack_interface_s1ap_lte,
                             public stack_interface_gtpu_lte,
                             public stack_interface_mac_lte,
+                            public stack_interface_agent,
                             public srslte::thread
 {
 public:
@@ -54,7 +55,7 @@ public:
   ~enb_stack_lte() final;
 
   // eNB stack base interface
-  int         init(const stack_args_t& args_, const rrc_cfg_t& rrc_cfg_, phy_interface_stack_lte* phy_);
+  int         init(const stack_args_t& args_, Empower::Agent::agent *agent, const rrc_cfg_t& rrc_cfg_, phy_interface_stack_lte* phy_);
   int         init(const stack_args_t& args_, const rrc_cfg_t& rrc_cfg_);
   void        stop() final;
   std::string get_type() final;
@@ -106,6 +107,10 @@ public:
   void rl_ok(uint16_t rnti) final { mac.rl_ok(rnti); }
   void tti_clock() override;
 
+  /* Stack-Agent interface */
+  void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq) override;
+  void rrc_meas_config_rem(uint16_t rnti, uint8_t id) override;
+
   /* STACK-S1AP interface*/
   void add_mme_socket(int fd) override;
   void remove_mme_socket(int fd) override;
@@ -147,6 +152,7 @@ private:
   srsenb::gtpu      gtpu;
   srsenb::s1ap      s1ap;
   srslte::s1ap_pcap s1ap_pcap;
+  Empower::Agent::agent *agent;
 
   srslte::logger*           logger = nullptr;
   srslte::byte_buffer_pool* pool   = nullptr;

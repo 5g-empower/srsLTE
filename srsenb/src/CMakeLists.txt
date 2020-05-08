@@ -34,7 +34,7 @@ endif (RPATH)
 
 add_library(enb_cfg_parser parser.cc enb_cfg_parser.cc)
 
-add_executable(srsenb main.cc enb.cc metrics_stdout.cc metrics_csv.cc)
+add_executable(srsenb main.cc enb.cc metrics_stdout.cc metrics_csv.cc agent.cc)
 target_link_libraries(srsenb  srsenb_phy
                               srsenb_stack
                               srsenb_upper
@@ -49,10 +49,11 @@ target_link_libraries(srsenb  srsenb_phy
                               s1ap_asn1
                               enb_cfg_parser
                               ${CMAKE_THREAD_LIBS_INIT}
-                              ${Boost_LIBRARIES} 
+                              ${Boost_LIBRARIES}
                               ${SEC_LIBRARIES}
                               ${LIBCONFIGPP_LIBRARIES}
-                              ${SCTP_LIBRARIES})
+                              ${SCTP_LIBRARIES}
+                              EmpowerAgentProto)
 
 if (RPATH)
   set_target_properties(srsenb PROPERTIES INSTALL_RPATH ".")

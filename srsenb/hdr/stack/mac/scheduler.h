@@ -94,6 +94,7 @@ public:
   ~sched() override;
 
   void init(rrc_interface_mac* rrc);
+  void init(rrc_interface_mac* rrc, agent_interface_mac* agent);
   int  cell_cfg(const std::vector<cell_cfg_t>& cell_cfg) override;
   void set_sched_cfg(sched_args_t* sched_cfg);
   int  reset() final;
@@ -147,6 +148,7 @@ protected:
   rrc_interface_mac*               rrc       = nullptr;
   sched_args_t                     sched_cfg = {};
   std::vector<sched_cell_params_t> sched_cell_params;
+  agent_interface_mac* agent;
 
   std::map<uint16_t, sched_ue> ue_db;
 

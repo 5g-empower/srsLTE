@@ -102,7 +102,8 @@ static const char rrc_state_text[RRC_STATE_N_ITEMS][100] = {"IDLE",
 class rrc final : public rrc_interface_pdcp,
                   public rrc_interface_mac,
                   public rrc_interface_rlc,
-                  public rrc_interface_s1ap
+                  public rrc_interface_s1ap,
+                  public rrc_interface_stack
 {
 public:
   rrc();
@@ -114,6 +115,16 @@ public:
             rlc_interface_rrc*     rlc,
             pdcp_interface_rrc*    pdcp,
             s1ap_interface_rrc*    s1ap,
+            gtpu_interface_rrc*    gtpu,
+            srslte::timer_handler* timers_);
+
+  void init(const rrc_cfg_t&       cfg_,
+            phy_interface_rrc_lte* phy,
+            mac_interface_rrc*     mac,
+            rlc_interface_rrc*     rlc,
+            pdcp_interface_rrc*    pdcp,
+            s1ap_interface_rrc*    s1ap,
+            agent_interface_rrc*   agent,
             gtpu_interface_rrc*    gtpu,
             srslte::timer_handler* timers_);
 
@@ -142,6 +153,10 @@ public:
   bool release_erabs(uint32_t rnti) override;
   void add_paging_id(uint32_t ueid, const asn1::s1ap::ue_paging_id_c& UEPagingID) override;
   void ho_preparation_complete(uint16_t rnti, bool is_success, srslte::unique_byte_buffer_t rrc_container) override;
+
+  // rrc_interface stack
+  void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq) override;
+  void rrc_meas_config_rem(uint16_t rnti, uint8_t id) override;
 
   // rrc_interface_pdcp
   void write_pdu(uint16_t rnti, uint32_t lcid, srslte::unique_byte_buffer_t pdu) override;
@@ -194,6 +209,10 @@ private:
 
     rrc_state_t get_state();
 
+    void send_connection_reconf_rem_meas(uint8_t id);
+    void send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t carrier_freq);
+
+    void send_identity_request();
     void send_connection_setup(bool is_setup = true);
     void send_connection_reest();
     void send_connection_reject();
@@ -209,6 +228,7 @@ private:
     void handle_rrc_con_req(asn1::rrc::rrc_conn_request_s* msg);
     void handle_rrc_con_reest_req(asn1::rrc::rrc_conn_reest_request_r8_ies_s* msg);
     void handle_rrc_con_setup_complete(asn1::rrc::rrc_conn_setup_complete_s* msg, srslte::unique_byte_buffer_t pdu);
+    void handle_ul_info_transfer(asn1::rrc::ul_info_transfer_s* msg, srslte::unique_byte_buffer_t pdu);
     void handle_rrc_reconf_complete(asn1::rrc::rrc_conn_recfg_complete_s* msg, srslte::unique_byte_buffer_t pdu);
     void handle_security_mode_complete(asn1::rrc::security_mode_complete_s* msg);
     void handle_security_mode_failure(asn1::rrc::security_mode_fail_s* msg);
@@ -375,6 +395,7 @@ private:
   pdcp_interface_rrc*       pdcp   = nullptr;
   gtpu_interface_rrc*       gtpu   = nullptr;
   s1ap_interface_rrc*       s1ap   = nullptr;
+  agent_interface_rrc*      agent   = nullptr;
   srslte::log_ref           rrc_log;
 
   // derived params

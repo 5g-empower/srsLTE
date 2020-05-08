@@ -49,6 +49,7 @@ public:
             rlc_interface_mac*       rlc,
             rrc_interface_mac*       rrc,
             stack_interface_mac_lte* stack_,
+            agent_interface_mac*     agent_,
             srslte::log_ref          log_h);
   void stop();
 
@@ -120,6 +121,7 @@ private:
   rlc_interface_mac*       rlc_h = nullptr;
   rrc_interface_mac*       rrc_h = nullptr;
   stack_interface_mac_lte* stack = nullptr;
+  agent_interface_mac*     agent = nullptr;
   srslte::log_ref          log_h;
 
   cell_list_t cells = {};

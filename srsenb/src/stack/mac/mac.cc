@@ -57,6 +57,7 @@ bool mac::init(const mac_args_t&        args_,
                rlc_interface_mac*       rlc,
                rrc_interface_mac*       rrc,
                stack_interface_mac_lte* stack_,
+               agent_interface_mac*     agent_,
                srslte::log_ref          log_h_)
 {
   started = false;
@@ -66,6 +67,7 @@ bool mac::init(const mac_args_t&        args_,
     rlc_h = rlc;
     rrc_h = rrc;
     stack = stack_;
+    agent = agent_;
     log_h = log_h_;
 
     args  = args_;
@@ -73,7 +75,7 @@ bool mac::init(const mac_args_t&        args_,
 
     stack_task_queue = stack->make_task_queue();
 
-    scheduler.init(rrc);
+    scheduler.init(rrc, agent);
 
     // Set default scheduler configuration
     scheduler.set_sched_cfg(&args.sched);

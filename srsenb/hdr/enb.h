@@ -32,6 +32,8 @@
 #include <stdarg.h>
 #include <string>
 
+#include "agent.h"
+
 #include "phy/phy.h"
 #include "srsenb/hdr/stack/rrc/rrc.h"
 
@@ -97,6 +99,12 @@ struct general_args_t {
   std::string eea_pref_list;
 };
 
+struct agent_args_t {
+  std::string address;
+  uint16_t    port;
+  uint32_t    delay;
+};
+
 struct all_args_t {
   enb_args_t        enb;
   enb_files_t       enb_files;
@@ -106,6 +114,7 @@ struct all_args_t {
   general_args_t    general;
   phy_args_t        phy;
   stack_args_t      stack;
+  agent_args_t      agent;
 };
 
 /*******************************************************************************
@@ -140,6 +149,7 @@ private:
   int parse_args(const all_args_t& args_);
 
   // eNB components
+  std::unique_ptr<Empower::Agent::agent> agent = nullptr;
   std::unique_ptr<enb_stack_base>     stack = nullptr;
   std::unique_ptr<srslte::radio>      radio = nullptr;
   std::unique_ptr<enb_phy_base>       phy   = nullptr;
