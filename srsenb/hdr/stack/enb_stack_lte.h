@@ -108,7 +108,7 @@ public:
   void tti_clock() override;
 
   /* Stack-Agent interface */
-  void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq) override;
+  void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq, asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount, asn1::rrc::report_interv_e interval) override;
   void rrc_meas_config_rem(uint16_t rnti, uint8_t id) override;
 
   /* STACK-S1AP interface*/

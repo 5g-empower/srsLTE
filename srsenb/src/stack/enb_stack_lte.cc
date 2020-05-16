@@ -220,9 +220,9 @@ void enb_stack_lte::handle_mme_rx_packet(srslte::unique_byte_buffer_t pdu,
   pending_tasks.push(mme_queue_id, std::bind(task_handler, std::move(pdu)));
 }
 
-void enb_stack_lte::rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq)
+void enb_stack_lte::rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq, asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount, asn1::rrc::report_interv_e interval)
 {
-  rrc.rrc_meas_config_add(rnti, id, pci, carrier_freq);
+  rrc.rrc_meas_config_add(rnti, id, pci, carrier_freq, amount, interval);
 }
 
 void enb_stack_lte::rrc_meas_config_rem(uint16_t rnti, uint8_t id)

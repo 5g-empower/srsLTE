@@ -37,8 +37,8 @@ enum user_status {
 typedef struct {
     uint16_t rnti;
     uint8_t meas_id;
-    uint8_t interval;
-    uint8_t amount;
+    asn1::rrc::report_interv_e interval;
+    asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount;
 } meas_cfg_t;
 
 typedef struct {
@@ -119,7 +119,7 @@ private:
   void send_meas_report(uint16_t rnti, uint8_t meas_id, uint8_t rsrp, uint8_t rsrq);
 
   // Add a new measurement
-  uint8_t add_meas(uint16_t rnti, uint8_t interval, uint8_t amount);
+  uint8_t add_meas(uint16_t rnti, uint8_t amount, uint8_t interval);
 
   // Add a new measurement
   uint8_t rem_meas(uint16_t rnti, uint8_t meas_d);
@@ -141,6 +141,9 @@ private:
 
   // The list of cells
   std::map<uint16_t, cell_t> cells;
+
+  /// The User Equipments
+  std::map<uint16_t, user_t> users;
 
   // I/O Socket
   IO io;
@@ -166,10 +169,7 @@ private:
   // The sequence number
   std::uint32_t sequence;
 
-  /// The User Equipments
-  std::map<uint16_t, user_t> users;
-
-  // Mutex
+  // Mutex (general)
   std::mutex mtx;
 
   // Agent interface to Stack

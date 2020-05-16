@@ -380,7 +380,7 @@ public:
 class rrc_interface_stack
 {
 public:
-  virtual void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq) = 0;
+  virtual void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq, asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount, asn1::rrc::report_interv_e interval) = 0;
   virtual void rrc_meas_config_rem(uint16_t rnti, uint8_t id) = 0;
 };
 
@@ -437,7 +437,7 @@ public:
 class stack_interface_agent
 {
 public:
-  virtual void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq) = 0;
+  virtual void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq, asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount, asn1::rrc::report_interv_e interval) = 0;
   virtual void rrc_meas_config_rem(uint16_t rnti, uint8_t id) = 0;
 };
 

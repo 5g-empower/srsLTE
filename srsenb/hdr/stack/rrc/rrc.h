@@ -155,7 +155,7 @@ public:
   void ho_preparation_complete(uint16_t rnti, bool is_success, srslte::unique_byte_buffer_t rrc_container) override;
 
   // rrc_interface stack
-  void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq) override;
+  void rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq, asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount, asn1::rrc::report_interv_e interval) override;
   void rrc_meas_config_rem(uint16_t rnti, uint8_t id) override;
 
   // rrc_interface_pdcp
@@ -210,7 +210,7 @@ private:
     rrc_state_t get_state();
 
     void send_connection_reconf_rem_meas(uint8_t id);
-    void send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t carrier_freq);
+    void send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t carrier_freq, asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount, asn1::rrc::report_interv_e interval);
 
     void send_identity_request();
     void send_connection_setup(bool is_setup = true);

@@ -242,14 +242,14 @@ void rrc::upd_user(uint16_t new_rnti, uint16_t old_rnti)
 /*******************************************************************************
   Stack interface
 *******************************************************************************/
-void rrc::rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq)
+void rrc::rrc_meas_config_add(uint16_t rnti, uint8_t id, uint16_t pci, uint32_t carrier_freq, asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount, asn1::rrc::report_interv_e interval)
 {
   auto it = users.find(rnti);
   if (it == users.end()) {
     rrc_log->error("Unable to find RNTI %u", rnti);
     return;
   }
-  it->second->send_connection_reconf_add_meas(id, pci, carrier_freq);
+  it->second->send_connection_reconf_add_meas(id, pci, carrier_freq, amount, interval);
 }
 
 void rrc::rrc_meas_config_rem(uint16_t rnti, uint8_t id)
@@ -1921,9 +1921,10 @@ void rrc::ue::send_connection_reconf_upd(srslte::unique_byte_buffer_t pdu)
 }
 
 void rrc::ue::send_connection_reconf_rem_meas(uint8_t id) {
+  printf("REM MEAS NOT IMPLEMENTED\n");
 }
 
-void rrc::ue::send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t carrier_freq) {
+void rrc::ue::send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t carrier_freq, asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount, asn1::rrc::report_interv_e interval) {
 
   dl_dcch_msg_s dl_dcch_msg;
 
@@ -1951,7 +1952,7 @@ void rrc::ue::send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t
 
   asn1::rrc::meas_obj_to_add_mod_s meas_obj;
 
-  meas_obj.meas_obj_id = id;
+  meas_obj.meas_obj_id = 1;
   meas_obj.meas_obj.set_meas_obj_eutra();
   meas_obj.meas_obj.meas_obj_eutra().carrier_freq = carrier_freq;
   meas_obj.meas_obj.meas_obj_eutra().allowed_meas_bw = asn1::rrc::allowed_meas_bw_opts::mbw50;
@@ -1962,7 +1963,7 @@ void rrc::ue::send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t
 
   asn1::rrc::cells_to_add_mod_s cell;
   cell.cell_idx = 1;
-  cell.pci = 0;
+  cell.pci = pci;
   cell.cell_individual_offset = asn1::rrc::q_offset_range_e::db24;
 
   lcells->push_back(cell);
@@ -1978,9 +1979,10 @@ void rrc::ue::send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t
   report_cfg.report_cfg.report_cfg_eutra().trigger_type.set_periodical();
   report_cfg.report_cfg.report_cfg_eutra().trigger_quant = asn1::rrc::report_cfg_eutra_s::trigger_quant_e_::rsrp;
   report_cfg.report_cfg.report_cfg_eutra().trigger_type.periodical().purpose = asn1::rrc::report_cfg_eutra_s::trigger_type_c_::periodical_s_::purpose_e_::report_strongest_cells;
-  report_cfg.report_cfg.report_cfg_eutra().report_amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::infinity;
+  report_cfg.report_cfg.report_cfg_eutra().report_amount = amount;
   report_cfg.report_cfg.report_cfg_eutra().report_quant = asn1::rrc::report_cfg_eutra_s::report_quant_e_::both;
-  report_cfg.report_cfg.report_cfg_eutra().report_interv = asn1::rrc::report_interv_opts::ms480;
+  report_cfg.report_cfg.report_cfg_eutra().report_interv = interval;
+
   report_cfg.report_cfg.report_cfg_eutra().max_report_cells = 1;
 
   lreport->push_back(report_cfg);
@@ -1990,16 +1992,13 @@ void rrc::ue::send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t
   asn1::rrc::meas_id_to_add_mod_s meas_id;
 
   meas_id.meas_id = id;
-  meas_id.meas_obj_id = id;
+  meas_id.meas_obj_id = 1;
   meas_id.report_cfg_id = id;
 
   lid->push_back(meas_id);
 
-  printf("Sending add meas\n");
-
   send_dl_dcch(&dl_dcch_msg);
 
-  printf("Sending done\n");
 }
 
 void rrc::ue::send_connection_reconf(srslte::unique_byte_buffer_t pdu)

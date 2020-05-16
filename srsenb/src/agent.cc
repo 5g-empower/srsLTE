@@ -114,9 +114,7 @@ void agent::update_dl_mac_prb_utilization_report(srsenb::sched_interface::dl_sch
         prbs += dl_prbs_from_dci(&sched_result->data[i].dci, cells[pci].n_prb);
     }
 
-    mtx.lock();
     cells[pci].dl_prbs_counter +=prbs;
-    mtx.unlock();
 
 }
 
@@ -141,9 +139,7 @@ void agent::update_ul_mac_prb_utilization_report(srsenb::sched_interface::ul_sch
         prbs += ul_prbs_from_dci(&sched_result->pusch[i].dci, cells[pci].n_prb);
     }
 
-    mtx.lock();
     cells[pci].ul_prbs_counter +=prbs;
-    mtx.unlock();
 
 }
 
@@ -533,15 +529,104 @@ void agent::send_meas_report(uint16_t rnti, uint8_t meas_id, uint8_t rsrp, uint8
 
 }
 
-uint8_t agent::add_meas(uint16_t rnti, uint8_t interval, uint8_t amount) {
+uint8_t agent::add_meas(uint16_t rnti, uint8_t report_amount, uint8_t report_interval) {
 
-    agent_log.info("Add new measurement (rnti=%u, interval=%u, amount=%u))", rnti, interval, amount);
+    asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount;
+    asn1::rrc::report_interv_e interval;
+
+    switch (report_amount) {
+        case 0:
+            amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::r1;
+            break;
+        case 1:
+            amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::r2;
+            break;
+        case 2:
+            amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::r4;
+            break;
+        case 3:
+            amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::r8;
+            break;
+        case 4:
+            amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::r16;
+            break;
+        case 5:
+            amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::r32;
+            break;
+        case 6:
+            amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::r64;
+            break;
+        case 7:
+            amount = asn1::rrc::report_cfg_eutra_s::report_amount_e_::infinity;
+            break;
+        default:
+            return -1;
+    }
+
+    switch (report_interval) {
+        case 0:
+            interval = asn1::rrc::report_interv_opts::ms120;
+            break;
+        case 1:
+            interval = asn1::rrc::report_interv_opts::ms240;
+            break;
+        case 2:
+            interval = asn1::rrc::report_interv_opts::ms480;
+            break;
+        case 3:
+            interval = asn1::rrc::report_interv_opts::ms640;
+            break;
+        case 4:
+            interval = asn1::rrc::report_interv_opts::ms1024;
+            break;
+        case 5:
+            interval = asn1::rrc::report_interv_opts::ms2048;
+            break;
+        case 6:
+            interval = asn1::rrc::report_interv_opts::ms5120;
+            break;
+        case 7:
+            interval = asn1::rrc::report_interv_opts::ms10240;
+            break;
+        case 8:
+            interval = asn1::rrc::report_interv_opts::min1;
+            break;
+        case 9:
+            interval = asn1::rrc::report_interv_opts::min6;
+            break;
+        case 10:
+            interval = asn1::rrc::report_interv_opts::min12;
+            break;
+        case 11:
+            interval = asn1::rrc::report_interv_opts::min30;
+            break;
+        case 12:
+            interval = asn1::rrc::report_interv_opts::min60;
+            break;
+        default:
+            return -1;
+    }
+
+    printf("Add new measurement (rnti=%u, interval=%s, amount=%s)\n", rnti, interval.to_string().c_str(), amount.to_string().c_str());
 
     auto user_it = users.find(rnti);
 
     if (user_it == users.end()) {
         agent_log.error("Unable to find RNTI %u", rnti);
         return 0;
+    }
+
+    std::map<uint8_t, meas_cfg_t>::iterator meas_it;
+
+    for (meas_it = user_it->second.meas.begin(); meas_it != user_it->second.meas.end(); meas_it++) {
+
+        if ((meas_it->second.rnti == rnti) &&
+            (meas_it->second.amount == amount) &&
+            (meas_it->second.interval == interval)) {
+
+            return meas_it->second.meas_id;
+        }
+
     }
 
     meas_cfg_t meas_cfg;
@@ -556,7 +641,9 @@ uint8_t agent::add_meas(uint16_t rnti, uint8_t interval, uint8_t amount) {
     stack->rrc_meas_config_add(meas_cfg.rnti,
                                meas_cfg.meas_id,
                                user_it->second.cell->pci,
-                               user_it->second.cell->dl_earfcn);
+                               user_it->second.cell->dl_earfcn,
+                               meas_cfg.amount,
+                               meas_cfg.interval);
 
     return meas_cfg.meas_id;
 
@@ -594,6 +681,8 @@ void agent::handle_ue_meas_report(uint16_t rnti, const asn1::rrc::meas_report_s&
     const asn1::rrc::meas_results_s& meas_res = msg.crit_exts.c1().meas_report_r8().meas_results;
 
     uint8_t meas_id = meas_res.meas_id;
+
+    printf("UE MEAS REPORT meas_id=%u\n", meas_id);
 
     auto user_it = users.find(rnti);
 
@@ -645,6 +734,8 @@ void agent::handle_incoming_message() {
     uint32_t seq = messageDecoder.header().sequence();
     uint32_t xid = messageDecoder.header().transactionId();
 
+    MessageClass msg_class = messageDecoder.header().messageClass();
+
     agent_log.info("Received message type %u xid %u seq %u", msg, xid, seq);
 
     switch (messageDecoder.header().entityClass()) {
@@ -665,12 +756,12 @@ void agent::handle_incoming_message() {
     }
     case EntityClass::UE_MEASUREMENTS_SERVICE: {
         // We assume that the message can have a single TLV
-        if (messageDecoder.header().messageClass() == MessageClass::REQUEST_ADD) {
+        if (msg_class == MessageClass::REQUEST_ADD) {
             TLVUEMeasurementConfig tlv;
             messageDecoder.get(tlv);
-            uint8_t id = add_meas(tlv.rnti(), tlv.interval(), tlv.amount());
+            uint8_t id = add_meas(tlv.rnti(), tlv.amount(), tlv.interval());
             send_meas_id(xid, tlv.rnti(), id);
-        } else if (messageDecoder.header().messageClass() == MessageClass::REQUEST_DEL) {
+        } else if (msg_class == MessageClass::REQUEST_DEL) {
             TLVUEMeasurementId tlv;
             messageDecoder.get(tlv);
             uint8_t id = rem_meas(tlv.rnti(), tlv.measId());
@@ -724,7 +815,9 @@ void agent::hello_loop() {
 }
 
 void agent::fill_header(CommonHeaderEncoder &headerEncoder) {
-    headerEncoder.sequence(sequence).elementId(static_cast<std::uint64_t>(enb_id));
+    headerEncoder
+        .sequence(sequence)
+        .elementId(static_cast<std::uint64_t>(enb_id));
     ++sequence;
 }
 
