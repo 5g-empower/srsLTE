@@ -31,206 +31,239 @@
 
 namespace srslte {
 
-//! Transition Type
-template <typename NextState>
-struct to_state {
-  using next_state = NextState;
-};
-
-template <typename... NextStates>
-struct to_states {
-  template <typename ChosenState>
-  to_states(to_state<ChosenState>) : state_idx(get_type_index<ChosenState, NextStates...>())
-  {}
-
-  template <typename State>
-  bool is() const
-  {
-    return get_type_index<State, NextStates...>() == state_idx;
-  }
-
-  size_t get_type_idx() const { return state_idx; }
-
-  size_t state_idx;
-};
-
-//! Forward declaration
+//! Forward declarations
 template <typename Derived>
 class fsm_t;
 
 namespace fsm_details {
 
-//! Visitor to get a state's name string
+//! Meta-function to filter transition list <Rows...> by <Event, SrcState> types
+template <class Event, class SrcState, class...>
+struct filter_transition_type;
+template <class Event, class SrcState, class... Rows>
+struct filter_transition_type<Event, SrcState, type_list<Rows...> > {
+  template <class Row>
+  using predicate = typename Row::template is_match<SrcState, Event>;
+  using type      = typename type_utils::filter<predicate, Rows...>::type;
+};
+template <class Event, class SrcState>
+struct filter_transition_type<Event, SrcState, type_list<> > {
+  using type = type_list<>;
+};
+
+//! Visitor to get current state's name string
 struct state_name_visitor {
   template <typename State>
   void operator()(State&& s)
   {
     name = get_type_name(s);
   }
+
   std::string name = "invalid";
 };
 
-//! Visitor to convert a to_state<States...> back to a single state
-template <typename FSM, typename PrevState>
-struct to_state_visitor {
-  to_state_visitor(FSM* f_, PrevState* p_) : f(f_), p(p_) {}
-  template <typename State>
-  void       operator()();
-  FSM*       f;
-  PrevState* p;
-};
+//! Enable/Disable meta-function if <State> is part of <FSM> state list
+template <typename FSM, typename State, typename T = void>
+using enable_if_fsm_state = typename std::enable_if<FSM::template can_hold_state<State>(), T>::type;
+template <typename FSM, typename State, typename T = void>
+using disable_if_fsm_state = typename std::enable_if<not FSM::template can_hold_state<State>(), T>::type;
 
-//! Helper metafunctions
-template <typename FSM, typename State>
-using enable_if_fsm_state = typename std::enable_if<FSM::template can_hold_state<State>()>::type;
-template <typename FSM, typename State>
-using disable_if_fsm_state = typename std::enable_if<not FSM::template can_hold_state<State>()>::type;
 template <typename FSM>
 constexpr bool is_fsm()
 {
   return std::is_base_of<fsm_t<FSM>, FSM>::value;
 }
+
 template <typename FSM>
 constexpr typename std::enable_if<is_fsm<FSM>(), bool>::type is_subfsm()
 {
   return FSM::is_nested;
 }
+
 template <typename FSM>
 constexpr typename std::enable_if<not is_fsm<FSM>(), bool>::type is_subfsm()
 {
   return false;
 }
+
 template <typename FSM>
 using enable_if_subfsm = typename std::enable_if<is_subfsm<FSM>()>::type;
 template <typename FSM>
 using disable_if_subfsm = typename std::enable_if<not is_subfsm<FSM>()>::type;
 
-struct fsm_helper {
-  //! Metafunction to determine if FSM can hold given State type
-  template <typename FSM>
-  using fsm_state_list_type = decltype(std::declval<typename FSM::derived_view>().states);
+//! Metafunction to determine if FSM can hold given State type
+template <typename FSM>
+using fsm_state_list_type = decltype(std::declval<typename FSM::derived_view>().states);
+template <typename FSM>
+using fsm_transitions = typename FSM::derived_view::transitions;
 
-  //! Call FSM/State enter method
-  template <typename FSM, typename State>
-  static enable_if_subfsm<State> call_enter(FSM* f, State* s)
+//! Detection of enter/exit methods of a state.
+template <typename FSM, typename State>
+auto call_enter(FSM* f, State* s) -> decltype(s->enter(f))
+{
+  s->enter(f);
+}
+void call_enter(...) {}
+template <typename FSM, typename State>
+auto call_exit(FSM* f, State* s) -> decltype(s->exit(f))
+{
+  s->exit(f);
+}
+void call_exit(...) {}
+
+//! Find State in FSM recursively (e.g. find State in FSM,FSM::parentFSM,FSM::parentFSM::parentFSM,...)
+template <typename State, typename FSM>
+static auto get_state_recursive(FSM* f) -> enable_if_fsm_state<FSM, State, State*>
+{
+  return &f->states.template get_unchecked<State>();
+}
+
+template <typename FSM>
+typename FSM::derived_view* get_derived(FSM* f)
+{
+  return static_cast<typename FSM::derived_view*>(f);
+}
+
+template <typename State, typename FSM>
+static auto get_state_recursive(FSM* f) -> disable_if_fsm_state<FSM, State, State*>
+{
+  static_assert(FSM::is_nested, "State is not present in the FSM list of valid states");
+  return get_state_recursive<State>(get_derived(f->parent_fsm()));
+}
+
+//! Helper type for FSM state-related operations
+template <typename FSM, typename State>
+struct state_traits {
+  static_assert(FSM::template can_hold_state<State>(), "FSM type does not hold provided State\n");
+  using state_t   = State;
+  using is_subfsm = std::integral_constant<bool, ::srslte::fsm_details::is_subfsm<State>()>;
+
+  //! enter new state. enter is called recursively for subFSMs
+  static void enter_state(FSM* f, State* s) { enter_(f, s, is_subfsm{}); }
+  //! Change state. If DestState is not a state of FSM, call same function for parentFSM recursively
+  template <typename DestState>
+  static enable_if_fsm_state<FSM, DestState> transit_state(FSM* f)
+  {
+    call_exit(f, &f->states.template get_unchecked<State>());
+    f->states.template transit<DestState>();
+    state_traits<FSM, DestState>::enter_state(f, &f->states.template get_unchecked<DestState>());
+  }
+  template <typename DestState>
+  static disable_if_fsm_state<FSM, DestState> transit_state(FSM* f)
+  {
+    using parent_state_traits = state_traits<typename FSM::parent_t::derived_view, typename FSM::derived_t>;
+    call_exit(f, &f->states.template get_unchecked<State>());
+    parent_state_traits::template transit_state<DestState>(get_derived(f->parent_fsm()));
+  }
+
+private:
+  //! In case of State is a subFSM
+  static void enter_(FSM* f, State* s, std::true_type)
   {
     using init_type = typename fsm_state_list_type<State>::init_state_t;
     // set default FSM type
-    s->derived()->states.template transit<init_type>();
+    get_derived(s)->states.template transit<init_type>();
     // call FSM enter function
-    f->enter(*s);
+    call_enter(f, s);
     // call initial substate enter
-    call_enter(s->derived(), &s->derived()->states.template get_unchecked<init_type>());
+    state_traits<typename State::derived_view, init_type>::enter_state(
+        get_derived(s), &get_derived(s)->states.template get_unchecked<init_type>());
   }
-  template <typename FSM, typename State, typename... Args>
-  static disable_if_subfsm<State> call_enter(FSM* f, State* s)
-  {
-    f->enter(*s);
-  }
-
-  //! TargetState is type-erased (a choice). Apply its stored type to the fsm current state
-  template <typename FSM, typename... Args, typename PrevState>
-  static void handle_state_change(FSM* f, to_states<Args...>* s, PrevState* p)
-  {
-    to_state_visitor<FSM, PrevState> visitor{f, p};
-    srslte::static_visit(visitor, *s);
-  }
-  //! Simple state transition in FSM (no same_state of entry in nested FSM)
-  template <typename FSM, typename State, typename PrevState>
-  static auto handle_state_change(FSM* f, to_state<State>* s, PrevState* p) -> enable_if_fsm_state<FSM, State>
-  {
-    if (std::is_same<State, PrevState>::value) {
-      f->log_h->info("FSM \"%s\": No transition occurred while in state \"%s\"\n",
-                     get_type_name<typename FSM::derived_t>().c_str(),
-                     get_type_name<State>().c_str());
-      return;
-    }
-    f->exit(f->states.template get_unchecked<PrevState>());
-    f->states.template transit<State>();
-    f->log_h->info("FSM \"%s\": Detected transition \"%s\" -> \"%s\"",
-                   get_type_name<typename FSM::derived_t>().c_str(),
-                   get_type_name<PrevState>().c_str(),
-                   get_type_name<State>().c_str());
-    call_enter(f, &f->states.template get_unchecked<State>());
-  }
-  //! State not present in current FSM. Attempt state transition in parent FSM in the case of NestedFSM
-  template <typename FSM, typename State, typename PrevState>
-  static auto handle_state_change(FSM* f, to_state<State>* s, PrevState* p) -> disable_if_fsm_state<FSM, State>
-  {
-    static_assert(FSM::is_nested, "State is not present in the FSM list of valid states");
-    f->exit(f->states.template get_unchecked<PrevState>());
-    handle_state_change(f->parent_fsm()->derived(), s, static_cast<typename FSM::derived_t*>(f));
-  }
-
-  //! Trigger Event, that will result in a state transition
-  template <typename FSM, typename Event>
-  struct trigger_visitor {
-    trigger_visitor(FSM* f_, Event&& ev_) : f(f_), ev(std::forward<Event>(ev_)) {}
-
-    /**
-     * @brief Trigger visitor callback for the current state.
-     * @description tries to find an fsm::trigger method in case the current state is a nested fsm. If it does not
-     * find it, searches for a react(current_state&, event) method at the current level
-     * Stores True in "result" if state changed. False otherwise
-     */
-    template <typename CurrentState>
-    disable_if_subfsm<CurrentState> operator()(CurrentState& s)
-    {
-      result = call_react(s);
-    }
-    template <typename CurrentState>
-    enable_if_subfsm<CurrentState> operator()(CurrentState& s)
-    {
-      // Enter here for SubFSMs
-      result = s.trigger(std::forward<Event>(ev));
-      if (not result) {
-        result = call_react(s);
-      }
-    }
-
-    template <typename State>
-    using enable_if_react = decltype(std::declval<FSM>().react(std::declval<State&>(), std::declval<Event&&>()),
-                                     bool());
-    //! In case there is a react method
-    template <typename State>
-    auto call_react(State& s) -> decltype(std::declval<FSM>().react(s, std::declval<Event&&>()), bool())
-    {
-      auto target_state = f->react(s, std::forward<Event>(ev));
-      fsm_helper::handle_state_change(f, &target_state, &s);
-      return true;
-    }
-    template <typename... Args>
-    bool call_react(Args...)
-    {
-      f->log_fsm_activity(
-          "FSM \"%s\": Unhandled event caught: \"%s\"\n", get_type_name<FSM>().c_str(), get_type_name<Event>().c_str());
-      return false;
-    }
-
-    FSM*  f;
-    Event ev;
-    bool  result = false;
-  };
+  //! In case of State is basic state
+  static void enter_(FSM* f, State* s, std::false_type) { call_enter(f, s); }
 };
 
-template <typename FSM, typename PrevState>
-template <typename State>
-void to_state_visitor<FSM, PrevState>::operator()()
-{
-  to_state<State> t;
-  fsm_helper::handle_state_change(f, &t, p);
-}
+//! Trigger Event reaction for the first Row for which the Guard passes
+template <typename FSM, typename... Types>
+struct apply_first_guard_pass;
+
+template <typename FSM, typename First, typename... Rows>
+struct apply_first_guard_pass<FSM, type_list<First, Rows...> > {
+  template <typename SrcState>
+  static bool trigger(FSM* f, SrcState& s, const typename First::event_t& ev)
+  {
+    using src_state  = SrcState;
+    using dest_state = typename First::dest_state_t;
+    using event_type = typename First::event_t;
+
+    bool triggered = First::react(f, s, ev);
+    if (triggered) {
+      // Log Transition
+      if (std::is_same<src_state, dest_state>::value) {
+        f->log_fsm_activity("FSM \"%s\": Event \"%s\" updated state \"%s\"\n",
+                            get_type_name<typename FSM::derived_t>().c_str(),
+                            get_type_name<event_type>().c_str(),
+                            get_type_name<src_state>().c_str());
+      } else {
+        f->log_fsm_activity("FSM \"%s\": Transition detected - %s -> %s (cause: %s)",
+                            get_type_name<typename FSM::derived_t>().c_str(),
+                            get_type_name<src_state>().c_str(),
+                            get_type_name<dest_state>().c_str(),
+                            get_type_name<event_type>().c_str());
+        // Apply state change operations
+        state_traits<FSM, src_state>::template transit_state<dest_state>(f);
+      }
+      return true;
+    }
+    return apply_first_guard_pass<FSM, type_list<Rows...> >::trigger(f, s, ev);
+  }
+};
+
+template <typename FSM>
+struct apply_first_guard_pass<FSM, type_list<> > {
+  template <typename SrcState, typename Event>
+  static bool trigger(FSM* f, SrcState& s, const Event& ev)
+  {
+    f->log_fsm_activity("FSM \"%s\": Unhandled event caught: \"%s\"\n",
+                        get_type_name<typename FSM::derived_t>().c_str(),
+                        get_type_name<Event>().c_str());
+    return false;
+  }
+};
+
+//! Trigger Event, that will result in a state transition
+template <typename FSM, typename Event>
+struct trigger_visitor {
+  using event_t = typename std::decay<Event>::type;
+
+  trigger_visitor(FSM* f_, Event&& ev_) : f(f_), ev(std::forward<Event>(ev_)) {}
+
+  /**
+   * @brief Trigger visitor callback for the current state.
+   * @description tries to find an fsm::trigger method in case the current state is a subfsm. If it does not
+   * find it, searches for a react(current_state&, dest_state&, event) method at the current level
+   * Stores True in "result" if state changed. False otherwise
+   */
+  template <typename CurrentState>
+  disable_if_subfsm<CurrentState> operator()(CurrentState& s)
+  {
+    result = call_react(s);
+  }
+
+  template <typename CurrentState>
+  enable_if_subfsm<CurrentState> operator()(CurrentState& s)
+  {
+    // Enter here for SubFSMs
+    result = s.trigger(std::forward<Event>(ev));
+    if (not result) {
+      result = call_react(s);
+    }
+  }
+
+  template <typename SrcState>
+  bool call_react(SrcState& s)
+  {
+    using trigger_list =
+        typename filter_transition_type<event_t, SrcState, typename FSM::derived_view::transitions>::type;
+    return apply_first_guard_pass<FSM, trigger_list>::trigger(f, s, ev);
+  }
+
+  FSM*  f;
+  Event ev;
+  bool  result = false;
+};
 
 } // namespace fsm_details
-
-//! Gets the typename currently stored in the choice_t
-template <typename... Args>
-std::string get_type_name(const srslte::to_states<Args...>& t)
-{
-  fsm_details::state_name_visitor v{};
-  srslte::visit(v, t);
-  return v.name;
-}
 
 template <typename Derived, typename ParentFSM>
 class nested_fsm_t;
@@ -250,20 +283,75 @@ public:
   {
   public:
     using derived_t = Derived;
-    using derived_t::base_t::enter;
-    using derived_t::base_t::exit;
     // propagate user fsm methods
-    using Derived::enter;
-    using Derived::exit;
-    using Derived::react;
     using Derived::states;
+    using typename Derived::transitions;
   };
 
+  //! Params of a state transition
+  template <typename SrcState,
+            typename DestState,
+            typename Event,
+            void (Derived::*ReactFn)(SrcState&, DestState&, const Event&) = nullptr,
+            bool (Derived::*GuardFn)(SrcState&, const Event&) const       = nullptr>
+  struct row {
+    using src_state_t  = SrcState;
+    using dest_state_t = DestState;
+    using event_t      = Event;
+
+    constexpr static void (Derived::*react_fn)(SrcState&, DestState&, const Event&) = ReactFn;
+
+    constexpr static bool (Derived::*guard_fn)(SrcState&, const Event&) const = GuardFn;
+
+    static bool react(derived_view* f, src_state_t& s, const event_t& ev)
+    {
+      if (guard_fn == nullptr or (f->*guard_fn)(s, ev)) {
+        dest_state_t* d = fsm_details::get_state_recursive<dest_state_t, derived_view>(f);
+        if (react_fn != nullptr) {
+          (f->*react_fn)(s, *d, ev);
+        }
+        return true;
+      }
+      return false;
+    }
+
+    template <typename SrcState2, typename Event2>
+    using is_match = std::is_same<type_list<SrcState2, Event2>, type_list<src_state_t, event_t> >;
+  };
+
+  template <typename DestState,
+            typename Event,
+            void (Derived::*ReactFn)(DestState&, const Event&) = nullptr,
+            bool (Derived::*GuardFn)(const Event&) const       = nullptr>
+  struct from_any_state {
+    using dest_state_t = DestState;
+    using event_t      = Event;
+
+    constexpr static void (Derived::*react_fn)(DestState&, const Event&) = ReactFn;
+
+    constexpr static bool (Derived::*guard_fn)(const Event&) const = GuardFn;
+
+    template <typename SrcState>
+    static bool react(derived_view* f, SrcState& s, const event_t& ev)
+    {
+      if (guard_fn == nullptr or (f->*guard_fn)(ev)) {
+        dest_state_t* d = fsm_details::get_state_recursive<dest_state_t, derived_view>(f);
+        if (react_fn != nullptr) {
+          (f->*react_fn)(*d, ev);
+        }
+        return true;
+      }
+      return false;
+    }
+
+    template <typename SrcState2, typename Event2>
+    using is_match = std::is_same<Event2, event_t>;
+  };
+
+  template <typename... Rows>
+  using transition_table = type_list<Rows...>;
+
   static const bool is_nested = false;
-  template <typename NextState>
-  using to_state = srslte::to_state<NextState>;
-  template <typename... NextStates>
-  using to_states = srslte::to_states<NextStates...>;
 
   //! Struct used to store FSM states
   template <typename... States>
@@ -277,7 +365,8 @@ public:
     {
       if (not Derived::is_nested) {
         // If Root FSM, call initial state enter method
-        fsm_details::fsm_helper::call_enter(f->derived(), &get_unchecked<init_state_t>());
+        fsm_details::state_traits<derived_view, init_state_t>::enter_state(f->derived(),
+                                                                           &get_unchecked<init_state_t>());
       }
     }
 
@@ -329,7 +418,7 @@ public:
   template <typename Ev>
   bool trigger(Ev&& e)
   {
-    fsm_details::fsm_helper::trigger_visitor<derived_view, Ev> visitor{derived(), std::forward<Ev>(e)};
+    fsm_details::trigger_visitor<derived_view, Ev> visitor{derived(), std::forward<Ev>(e)};
     srslte::visit(visitor, derived()->states);
     return visitor.result;
   }
@@ -369,30 +458,14 @@ public:
   template <typename State>
   constexpr static bool can_hold_state()
   {
-    return fsm_details::fsm_helper::fsm_state_list_type<fsm_t<Derived> >::template can_hold_type<State>();
+    return fsm_details::fsm_state_list_type<fsm_t<Derived> >::template can_hold_type<State>();
   }
 
-  void            set_fsm_event_log_level(srslte::LOG_LEVEL_ENUM e) { fsm_event_log_level = e; }
+  void set_fsm_event_log_level(srslte::LOG_LEVEL_ENUM e) { fsm_event_log_level = e; }
+
   srslte::log_ref get_log() const { return log_h; }
 
-protected:
-  friend struct fsm_details::fsm_helper;
-
-  // Access to CRTP derived class
-  derived_view*       derived() { return static_cast<derived_view*>(this); }
-  const derived_view* derived() const { return static_cast<const derived_view*>(this); }
-
-  template <typename State>
-  void enter(State& s)
-  {
-    // do nothing by default
-  }
-  template <typename State>
-  void exit(State& s)
-  {
-    // do nothing by default
-  }
-
+  //! Log FSM activity method, e.g. state transitions
   template <typename... Args>
   void log_fsm_activity(const char* format, Args&&... args)
   {
@@ -414,6 +487,12 @@ protected:
     }
   }
 
+protected:
+  // Access to CRTP derived class
+  derived_view* derived() { return static_cast<derived_view*>(this); }
+
+  const derived_view* derived() const { return static_cast<const derived_view*>(this); }
+
   srslte::log_ref        log_h;
   srslte::LOG_LEVEL_ENUM fsm_event_log_level = LOG_LEVEL_INFO;
 };
@@ -430,26 +509,20 @@ public:
 
   // Get pointer to outer FSM in case of HSM
   const parent_t* parent_fsm() const { return fsm_ptr; }
-  parent_t*       parent_fsm() { return fsm_ptr; }
+
+  parent_t* parent_fsm() { return fsm_ptr; }
 
 protected:
   using parent_fsm_t = ParentFSM;
-  using fsm_t<Derived>::enter;
-  using fsm_t<Derived>::exit;
 
   ParentFSM* fsm_ptr = nullptr;
-};
-
-template <typename Proc>
-struct proc_complete_ev {
-  proc_complete_ev(bool success_) : success(success_) {}
-  bool success;
 };
 
 // event
 template <typename... Args>
 struct proc_launch_ev {
   std::tuple<Args...> args;
+
   explicit proc_launch_ev(Args&&... args_) : args(std::forward<Args>(args_)...) {}
 };
 
@@ -458,19 +531,9 @@ class proc_fsm_t : public fsm_t<Derived>
 {
   using fsm_type = Derived;
   using fsm_t<Derived>::derived;
-  friend struct fsm_details::fsm_helper;
 
 protected:
   using fsm_t<Derived>::log_h;
-  using fsm_t<Derived>::enter;
-  using fsm_t<Derived>::exit;
-
-  template <typename State>
-  auto react(State&, srslte::proc_launch_ev<int*> e) -> to_state<State>
-  {
-    log_h->warning("Unhandled event \"launch\" caught when procedure is already running\n");
-    return {};
-  }
 
 public:
   using base_t = proc_fsm_t<Derived, Result>;
@@ -480,12 +543,56 @@ public:
   struct reset_ev {};
 
   // states
-  struct idle_st {};
-  struct complete_st {};
+  struct idle_st {
+    idle_st() = default;
+    template <typename T>
+    idle_st(bool success_, T&& r) : success(success_), result(std::forward<T>(r)), value_set(true)
+    {}
+
+    void enter(Derived* f)
+    {
+      if (f->launch_counter > 0) {
+        f->log_h->info("FSM \"%s\": Finished run no. %d %s\n",
+                       get_type_name<Derived>().c_str(),
+                       f->launch_counter,
+                       is_success() ? "successfully" : "with an error");
+        if (not is_result_set()) {
+          f->log_h->error(
+              "FSM \"%s\": No result was set for run no. %d\n", get_type_name<Derived>().c_str(), f->launch_counter);
+        }
+      }
+    }
+
+    void exit(Derived* f)
+    {
+      value_set = false;
+      success   = false;
+      f->launch_counter++;
+      f->log_h->info("FSM \"%s\": Starting run no. %d\n", get_type_name<Derived>().c_str(), f->launch_counter);
+    }
+
+    bool          is_result_set() const { return value_set; }
+    bool          is_success() const { return value_set and success; }
+    const Result& get_result() const { return result; }
+
+  private:
+    bool   success = false, value_set = false;
+    Result result = {};
+  };
 
   explicit proc_fsm_t(srslte::log_ref log_) : fsm_t<Derived>(log_) {}
 
   bool is_running() const { return base_t::template is_in_state<idle_st>(); }
+
+  bool is_success() const { return base_t::template get_state<idle_st>()->is_success(); }
+
+  const Result& get_result() const
+  {
+    if (is_success()) {
+      return base_t::template get_state<idle_st>->get_result();
+    }
+    THROW_BAD_ACCESS("in proc_fsm_t::get_result");
+  }
 
   template <typename... Args>
   void launch(Args&&... args)
@@ -493,40 +600,8 @@ public:
     trigger(proc_launch_ev<Args...>(std::forward<Args>(args)...));
   }
 
-protected:
-  void exit(idle_st& s)
-  {
-    launch_counter++;
-    log_h->info("Starting run no. %d\n", launch_counter);
-  }
-  void enter(complete_st& s) { trigger(reset_ev{}); }
-
-  auto react(complete_st& s, reset_ev ev) -> to_state<idle_st> { return {}; }
-
-  srslte::to_state<complete_st> set_success(Result&& r = {})
-  {
-    result  = std::forward<Result>(r);
-    success = true;
-    return {};
-  }
-  srslte::to_state<complete_st> set_failure()
-  {
-    success = false;
-    return {};
-  }
-  bool          is_success() const { return success; }
-  const Result& get_result() const
-  {
-    if (is_success()) {
-      return result;
-    }
-    THROW_BAD_ACCESS("in proc_fsm_t::get_result");
-  }
-
 private:
-  int    launch_counter = 0;
-  bool   success        = false;
-  Result result         = {};
+  int launch_counter = 0;
 };
 
 } // namespace srslte

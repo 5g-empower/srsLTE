@@ -89,7 +89,6 @@ option(ENABLE_MSAN     "Enable clang memory sanitizer"            OFF)
 option(ENABLE_TIDY     "Enable clang tidy"                        OFF)
 
 option(USE_LTE_RATES   "Use standard LTE sampling rates"          OFF)
-option(USE_GLIBC_IPV6  "Use glibc's own ipv6.h"                   ON)
 option(USE_MKL         "Use MKL instead of fftw"                  OFF)
 
 option(ENABLE_TIMEPROF "Enable time profiling"                    ON)
@@ -390,11 +389,6 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DFORCE_STANDARD_RATE")
   endif (USE_LTE_RATES)
 
-  if (USE_GLIBC_IPV6)
-    message(STATUS "Using default glibc header for IPv6 support.")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUSE_GLIBC_IPV6")
-  endif (USE_GLIBC_IPV6)
-
   if (AUTO_DETECT_ISA)
     find_package(SSE)
   endif (AUTO_DETECT_ISA)
@@ -483,7 +477,7 @@ if("Ninja" STREQUAL ${CMAKE_GENERATOR})
 endif()
 
 # Add -Werror to C/C++ flags for newer compilers
-if(NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.9 AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+if(NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.9)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
 endif()

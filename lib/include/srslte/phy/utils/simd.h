@@ -22,14 +22,14 @@
 #ifndef SRSLTE_SIMD_H
 #define SRSLTE_SIMD_H
 
-typedef _Complex float cf_t;
-
 #ifdef LV_HAVE_SSE /* AVX, AVX2, FMA, AVX512  are in this group */
 #ifndef __OPTIMIZE__
 #define __OPTIMIZE__
 #endif
 #include <immintrin.h>
 #endif /* LV_HAVE_SSE */
+
+#include "srslte/config.h"
 #include <stdio.h>
 
 #ifdef HAVE_NEON
@@ -1548,9 +1548,22 @@ static inline simd_s_t srslte_simd_s_neg(simd_s_t a, simd_s_t b)
   return _mm_sign_epi16(a, b);
 #else /* LV_HAVE_SSE */
 #ifdef HAVE_NEON
-  simd_s_t res;
+  /* Taken and modified from sse2neon.h licensed under MIT
+   * Source: https://github.com/DLTcollab/sse2neon
+   */
+  int16x8_t zero = vdupq_n_s16(0);
+  // signed shift right: faster than vclt
+  // (b < 0) ? 0xFFFF : 0
+  uint16x8_t ltMask = vreinterpretq_u16_s16(vshrq_n_s16(b, 15));
+  // (b == 0) ? 0xFFFF : 0
+  int16x8_t zeroMask = vreinterpretq_s16_u16(vceqq_s16(b, zero));
+  // -a
+  int16x8_t neg = vnegq_s16(a);
+  // bitwise select either a or neg based on ltMask
+  int16x8_t masked = vbslq_s16(ltMask, neg, a);
+  // res = masked & (~zeroMask)
+  int16x8_t res = vbicq_s16(masked, zeroMask);
   return res;
-  //#error sign instruction not available in Neon
 #endif /* HAVE_NEON */
 #endif /* LV_HAVE_SSE */
 #endif /* LV_HAVE_AVX2 */
@@ -2031,7 +2044,7 @@ static inline simd_b_t srslte_simd_b_sub(simd_b_t a, simd_b_t b)
 #endif /* LV_HAVE_AVX512 */
 }
 
-static inline simd_s_t srslte_simd_b_neg(simd_b_t a, simd_b_t b)
+static inline simd_b_t srslte_simd_b_neg(simd_b_t a, simd_b_t b)
 {
 #ifdef LV_HAVE_AVX512
   __m256i a0 = _mm512_extracti64x4_epi64(a, 0);
@@ -2049,9 +2062,22 @@ static inline simd_s_t srslte_simd_b_neg(simd_b_t a, simd_b_t b)
   return _mm_sign_epi8(a, b);
 #else /* LV_HAVE_SSE */
 #ifdef HAVE_NEON
-  simd_s_t res;
+  /* Taken and modified from sse2neon.h licensed under MIT
+   * Source: https://github.com/DLTcollab/sse2neon
+   */
+  int8x16_t zero = vdupq_n_s8(0);
+  // signed shift right: faster than vclt
+  // (b < 0) ? 0xFF : 0
+  uint8x16_t ltMask = vreinterpretq_u8_s8(vshrq_n_s8(b, 7));
+  // (b == 0) ? 0xFF : 0
+  int8x16_t zeroMask = vreinterpretq_s8_u8(vceqq_s8(b, zero));
+  // -a
+  int8x16_t neg = vnegq_s8(a);
+  // bitwise select either a or neg based on ltMask
+  int8x16_t masked = vbslq_s8(ltMask, neg, a);
+  // res = masked & (~zeroMask)
+  int8x16_t res = vbicq_s8(masked, zeroMask);
   return res;
-  //#error sign instruction not available in Neon
 #endif /* HAVE_NEON */
 #endif /* LV_HAVE_SSE */
 #endif /* LV_HAVE_AVX2 */

@@ -22,9 +22,9 @@
 #ifndef SRSENB_RRC_H
 #define SRSENB_RRC_H
 
+#include "rrc_cell_cfg.h"
 #include "rrc_metrics.h"
 #include "srsenb/hdr/stack/upper/common_enb.h"
-#include "srslte/asn1/rrc_asn1.h"
 #include "srslte/common/block_queue.h"
 #include "srslte/common/buffer_pool.h"
 #include "srslte/common/common.h"
@@ -32,64 +32,10 @@
 #include "srslte/common/stack_procedure.h"
 #include "srslte/common/timeout.h"
 #include "srslte/interfaces/enb_interfaces.h"
-#include "srslte/interfaces/enb_rrc_interface_types.h"
 #include <map>
 #include <queue>
 
 namespace srsenb {
-
-struct rrc_cfg_sr_t {
-  uint32_t                                                   period;
-  asn1::rrc::sched_request_cfg_c::setup_s_::dsr_trans_max_e_ dsr_max;
-  uint32_t                                                   nof_prb;
-  uint32_t                                                   sf_mapping[80];
-  uint32_t                                                   nof_subframes;
-};
-
-enum rrc_cfg_cqi_mode_t { RRC_CFG_CQI_MODE_PERIODIC = 0, RRC_CFG_CQI_MODE_APERIODIC, RRC_CFG_CQI_MODE_N_ITEMS };
-
-static const char rrc_cfg_cqi_mode_text[RRC_CFG_CQI_MODE_N_ITEMS][20] = {"periodic", "aperiodic"};
-
-typedef struct {
-  uint32_t           sf_mapping[80];
-  uint32_t           nof_subframes;
-  uint32_t           nof_prb;
-  uint32_t           period;
-  uint32_t           m_ri;
-  bool               simultaneousAckCQI;
-  rrc_cfg_cqi_mode_t mode;
-} rrc_cfg_cqi_t;
-
-typedef struct {
-  bool                                          configured;
-  asn1::rrc::lc_ch_cfg_s::ul_specific_params_s_ lc_cfg;
-  asn1::rrc::pdcp_cfg_s                         pdcp_cfg;
-  asn1::rrc::rlc_cfg_c                          rlc_cfg;
-} rrc_cfg_qci_t;
-
-#define MAX_NOF_QCI 10
-
-struct rrc_cfg_t {
-  uint32_t enb_id; ///< Required to pack SIB1
-  // Per eNB SIBs
-  asn1::rrc::sib_type1_s     sib1;
-  asn1::rrc::sib_info_item_c sibs[ASN1_RRC_MAX_SIB];
-  asn1::rrc::mac_main_cfg_s  mac_cnfg;
-
-  asn1::rrc::pusch_cfg_ded_s          pusch_cfg;
-  asn1::rrc::ant_info_ded_s           antenna_info;
-  asn1::rrc::pdsch_cfg_ded_s::p_a_e_  pdsch_cfg;
-  rrc_cfg_sr_t                        sr_cfg;
-  rrc_cfg_cqi_t                       cqi_cfg;
-  rrc_cfg_qci_t                       qci_cfg[MAX_NOF_QCI];
-  bool                                enable_mbsfn;
-  uint32_t                            inactivity_timeout_ms;
-  srslte::CIPHERING_ALGORITHM_ID_ENUM eea_preference_list[srslte::CIPHERING_ALGORITHM_ID_N_ITEMS];
-  srslte::INTEGRITY_ALGORITHM_ID_ENUM eia_preference_list[srslte::INTEGRITY_ALGORITHM_ID_N_ITEMS];
-  bool                                meas_cfg_present = false;
-  srslte_cell_t                       cell;
-  cell_list_t                         cell_list;
-};
 
 static const char rrc_state_text[RRC_STATE_N_ITEMS][100] = {"IDLE",
                                                             "WAIT FOR CON SETUP COMPLETE",
@@ -173,17 +119,6 @@ public:
                        const std::string&           msg_type);
 
 private:
-  struct cell_ctxt_t {
-    uint32_t                                  enb_cc_idx = 0;
-    asn1::rrc::mib_s                          mib;
-    asn1::rrc::sib_type1_s                    sib1;
-    asn1::rrc::sib_type2_s                    sib2;
-    const cell_cfg_t&                         cell_cfg;
-    std::vector<srslte::unique_byte_buffer_t> sib_buffer; ///< Packed SIBs for given CC
-
-    cell_ctxt_t(uint32_t idx, const cell_cfg_t& cell_cfg);
-  };
-
   class ue
   {
   public:
@@ -254,15 +189,9 @@ private:
     void notify_s1ap_ue_erab_setup_response(const asn1::s1ap::erab_to_be_setup_list_bearer_su_req_l& e);
 
     // Getters for PUCCH resources
-    int  allocate_scell_pucch(uint32_t cc_idx);
-    int  get_sr(uint8_t* I_sr, uint16_t* N_pucch_sr);
     int  get_cqi(uint16_t* pmi_idx, uint16_t* n_pucch, uint32_t ue_cc_idx);
     int  get_ri(uint32_t m_ri, uint16_t* ri_idx);
-    int  get_n_pucch_cs(uint16_t* N_pucch_cs);
-    bool is_allocated() const
-    {
-      return not cell_res_list.empty() and sr_allocated and (parent->cfg.cell_list.size() <= 1 or n_pucch_cs_alloc);
-    }
+    bool is_allocated() const;
 
     bool select_security_algorithms();
     void send_dl_ccch(asn1::rrc::dl_ccch_msg_s* dl_ccch_msg);
@@ -311,51 +240,28 @@ private:
     asn1::rrc::ue_eutra_cap_s                  eutra_capabilities;
     srslte::rrc_ue_capabilities_t              ue_capabilities;
 
-    typedef struct {
+    struct erab_t {
       uint8_t                                     id;
       asn1::s1ap::erab_level_qos_params_s         qos_params;
       asn1::bounded_bitstring<1, 160, true, true> address;
       uint32_t                                    teid_out;
       uint32_t                                    teid_in;
-    } erab_t;
+    };
     std::map<uint8_t, erab_t> erabs;
-    int                       sr_sched_sf_idx  = 0;
-    int                       sr_sched_prb_idx = 0;
-    bool                      sr_allocated     = false;
-    uint32_t                  sr_N_pucch       = 0;
-    uint32_t                  sr_I             = 0;
-    uint16_t                  n_pucch_cs_idx   = 0;
-    bool                      n_pucch_cs_alloc = false;
 
     std::map<uint8_t, srslte::unique_byte_buffer_t> erab_info_list;
 
     const static uint32_t UE_PCELL_CC_IDX = 0;
 
-    // Struct to store the cell resources allocated to a user
-    struct cell_res_ded_t {
-      const cell_ctxt_t* cell_common = nullptr;
-      uint32_t           pmi_idx     = 0;
-      uint32_t           pucch_res   = 0;
-      uint32_t           prb_idx     = 0;
-      uint32_t           sf_idx      = 0;
-    };
-    std::map<uint32_t, cell_res_ded_t> cell_res_list = {};
+    cell_ctxt_dedicated_list cell_ded_list;
 
     int get_drbid_config(asn1::rrc::drb_to_add_mod_s* drb, int drbid);
 
     ///< Helper to access a cell cfg based on ue_cc_idx
-    cell_ctxt_t* get_ue_cc_cfg(uint32_t ue_cc_idx);
+    cell_info_common* get_ue_cc_cfg(uint32_t ue_cc_idx);
 
     ///< Helper to fill SCell struct for RRR Connection Reconfig
     int fill_scell_to_addmod_list(asn1::rrc::rrc_conn_recfg_r8_ies_s* conn_reconf);
-
-    int  sr_allocate(uint32_t period);
-    void sr_free();
-    int  cqi_allocate(uint32_t period, uint32_t ue_cc_idx);
-    void cqi_free(uint32_t ue_cc_idx);
-    void cqi_free();
-    int  n_pucch_cs_allocate();
-    void n_pucch_cs_free();
 
     ///< UE's Physical layer dedicated configuration
     phy_interface_rrc_lte::phy_rrc_dedicated_list_t phy_rrc_dedicated_list = {};
@@ -399,13 +305,12 @@ private:
   srslte::log_ref           rrc_log;
 
   // derived params
-  std::vector<std::unique_ptr<cell_ctxt_t> > cell_ctxt_list;
+  std::unique_ptr<cell_info_common_list> cell_common_list;
 
   // state
+  std::unique_ptr<freq_res_common_list>          pucch_res_list;
   std::map<uint16_t, std::unique_ptr<ue> >       users; // NOTE: has to have fixed addr
   std::map<uint32_t, asn1::rrc::paging_record_s> pending_paging;
-
-  cell_ctxt_t* find_cell_ctxt(uint32_t cell_id);
 
   void     process_release_complete(uint16_t rnti);
   void     process_rl_failure(uint16_t rnti);
@@ -437,16 +342,6 @@ private:
   bool                         running         = false;
   static const int             RRC_THREAD_PRIO = 65;
   srslte::block_queue<rrc_pdu> rx_pdu_queue;
-
-  struct pucch_idx_sched_t {
-    uint32_t nof_users[100][80];
-  };
-
-  const static uint32_t             N_PUCCH_MAX_PRB = 4; // Maximum number of PRB to use for PUCCH ACK/NACK in CS mode
-  const static uint32_t             N_PUCCH_MAX_RES = 3 * SRSLTE_NRE * N_PUCCH_MAX_PRB;
-  pucch_idx_sched_t                 sr_sched        = {};
-  pucch_idx_sched_t                 cqi_sched       = {};
-  std::array<bool, N_PUCCH_MAX_RES> n_pucch_cs_used = {};
 
   asn1::rrc::mcch_msg_s  mcch;
   bool                   enable_mbms     = false;
