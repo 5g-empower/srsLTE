@@ -1866,7 +1866,29 @@ void rrc::ue::send_connection_reconf_upd(srslte::unique_byte_buffer_t pdu)
 }
 
 void rrc::ue::send_connection_reconf_rem_meas(uint8_t id) {
-  printf("REM MEAS NOT IMPLEMENTED\n");
+
+  dl_dcch_msg_s dl_dcch_msg;
+
+  dl_dcch_msg.msg.set_c1().set_rrc_conn_recfg();
+  dl_dcch_msg.msg.c1().rrc_conn_recfg().rrc_transaction_id = (uint8_t)((transaction_id++) % 4);
+  dl_dcch_msg.msg.c1().rrc_conn_recfg().crit_exts.set_c1().set_rrc_conn_recfg_r8();
+
+  asn1::rrc::rrc_conn_recfg_r8_ies_s *rrc_conn_recfg_r8_ies = &dl_dcch_msg.msg.c1().rrc_conn_recfg().crit_exts.c1().rrc_conn_recfg_r8();
+
+  rrc_conn_recfg_r8_ies->meas_cfg_present = true;
+  asn1::rrc::meas_cfg_s *meas_cfg = &rrc_conn_recfg_r8_ies->meas_cfg;
+
+  meas_cfg->report_cfg_to_rem_list_present = true;
+  meas_cfg->meas_id_to_rem_list_present = true;
+
+  asn1::rrc::report_cfg_to_rem_list_l *lreport = &meas_cfg->report_cfg_to_rem_list;
+  lreport->push_back(id);
+
+  asn1::rrc::meas_id_to_rem_list_l *lid = &meas_cfg->meas_id_to_rem_list;
+  lid->push_back(id);
+
+  send_dl_dcch(&dl_dcch_msg);
+
 }
 
 void rrc::ue::send_connection_reconf_add_meas(uint8_t id, uint16_t pci, uint32_t carrier_freq, asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount, asn1::rrc::report_interv_e interval) {
