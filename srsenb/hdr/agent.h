@@ -35,7 +35,6 @@ enum user_status {
 };
 
 typedef struct {
-    uint16_t rnti;
     uint8_t meas_id;
     asn1::rrc::report_interv_e interval;
     asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount;
@@ -56,7 +55,6 @@ typedef struct {
   uint16_t rnti;
   cell_t *cell;
   user_status status;
-  uint8_t next_meas_id;
   std::map<uint8_t, meas_cfg_t> meas;
 } user_t;
 
@@ -119,7 +117,7 @@ private:
   void send_meas_report(uint16_t rnti, uint8_t meas_id, uint8_t rsrp, uint8_t rsrq);
 
   // Add a new measurement
-  uint8_t add_meas(uint16_t rnti, uint8_t amount, uint8_t interval);
+  uint8_t add_meas(uint16_t rnti, uint8_t meas_id, uint8_t amount, uint8_t interval);
 
   // Add a new measurement
   uint8_t rem_meas(uint16_t rnti, uint8_t meas_d);

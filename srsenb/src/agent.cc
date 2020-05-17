@@ -75,7 +75,6 @@ void agent::add_user(uint64_t imsi, uint32_t tmsi, uint16_t rnti) {
         user.rnti = rnti;
         user.status = AGENT_USER_STATUS_CONNECTED;
         user.tmsi = tmsi;
-        user.next_meas_id = 1;
         users.insert(std::make_pair(rnti, user));
         it = users.find(rnti);
     }
@@ -529,7 +528,7 @@ void agent::send_meas_report(uint16_t rnti, uint8_t meas_id, uint8_t rsrp, uint8
 
 }
 
-uint8_t agent::add_meas(uint16_t rnti, uint8_t report_amount, uint8_t report_interval) {
+uint8_t agent::add_meas(uint16_t rnti, uint8_t meas_id, uint8_t report_amount, uint8_t report_interval) {
 
     asn1::rrc::report_cfg_eutra_s::report_amount_e_ amount;
     asn1::rrc::report_interv_e interval;
@@ -607,8 +606,6 @@ uint8_t agent::add_meas(uint16_t rnti, uint8_t report_amount, uint8_t report_int
             return -1;
     }
 
-    printf("Add new measurement (rnti=%u, interval=%s, amount=%s)\n", rnti, interval.to_string().c_str(), amount.to_string().c_str());
-
     auto user_it = users.find(rnti);
 
     if (user_it == users.end()) {
@@ -617,35 +614,32 @@ uint8_t agent::add_meas(uint16_t rnti, uint8_t report_amount, uint8_t report_int
     }
 
     std::map<uint8_t, meas_cfg_t>::iterator meas_it;
+    meas_it = user_it->second.meas.find(meas_id);
 
-    for (meas_it = user_it->second.meas.begin(); meas_it != user_it->second.meas.end(); meas_it++) {
-
-        if ((meas_it->second.rnti == rnti) &&
-            (meas_it->second.amount == amount) &&
-            (meas_it->second.interval == interval)) {
-
-            return meas_it->second.meas_id;
-        }
-
+    if(meas_it == user_it->second.meas.end()) {
+        meas_cfg_t meas_cfg;
+        meas_cfg.meas_id = meas_id;
+        meas_cfg.amount = amount;
+        meas_cfg.interval = interval;
+        user_it->second.meas.insert(std::make_pair(meas_cfg.meas_id, meas_cfg));
+        meas_it = user_it->second.meas.find(meas_id);
     }
 
-    meas_cfg_t meas_cfg;
+    meas_it->second.amount = amount;
+    meas_it->second.interval = interval;
 
-    meas_cfg.meas_id = user_it->second.next_meas_id++;
-    meas_cfg.rnti = user_it->second.rnti;
-    meas_cfg.amount = amount;
-    meas_cfg.interval = interval;
+    printf("Add UE measurement (rnti=%u, meas_id=%u,interval=%s, amount=%s)\n",
+           rnti, meas_id, interval.to_string().c_str(),
+           amount.to_string().c_str());
 
-    user_it->second.meas.insert(std::make_pair(meas_cfg.meas_id, meas_cfg));
-
-    stack->rrc_meas_config_add(meas_cfg.rnti,
-                               meas_cfg.meas_id,
+    stack->rrc_meas_config_add(rnti,
+                               meas_it->second.meas_id,
                                user_it->second.cell->pci,
                                user_it->second.cell->dl_earfcn,
-                               meas_cfg.amount,
-                               meas_cfg.interval);
+                               meas_it->second.amount,
+                               meas_it->second.interval);
 
-    return meas_cfg.meas_id;
+    return meas_it->second.meas_id;
 
 }
 
@@ -682,8 +676,6 @@ void agent::handle_ue_meas_report(uint16_t rnti, const asn1::rrc::meas_report_s&
 
     uint8_t meas_id = meas_res.meas_id;
 
-    printf("UE MEAS REPORT meas_id=%u\n", meas_id);
-
     auto user_it = users.find(rnti);
 
     if (user_it == users.end()) {
@@ -701,7 +693,8 @@ void agent::handle_ue_meas_report(uint16_t rnti, const asn1::rrc::meas_report_s&
     uint8_t rsrp = meas_res.meas_result_pcell.rsrp_result;
     uint8_t rsrq = meas_res.meas_result_pcell.rsrq_result;
 
-    agent_log.info("Measurement report (rnti=%u, meas_id=%u))", rnti, meas_id);
+    printf("UE measurement report (rnti=%u, meas_id=%u, rsrp=%u, rsrq=%u\n",
+                                   rnti, meas_id, rsrp, rsrq);
 
     send_meas_report(rnti, meas_id, rsrp, rsrq);
 
@@ -759,7 +752,7 @@ void agent::handle_incoming_message() {
         if (msg_class == MessageClass::REQUEST_ADD) {
             TLVUEMeasurementConfig tlv;
             messageDecoder.get(tlv);
-            uint8_t id = add_meas(tlv.rnti(), tlv.amount(), tlv.interval());
+            uint8_t id = add_meas(tlv.rnti(), tlv.measId(), tlv.amount(), tlv.interval());
             send_meas_id(xid, tlv.rnti(), id);
         } else if (msg_class == MessageClass::REQUEST_DEL) {
             TLVUEMeasurementId tlv;
